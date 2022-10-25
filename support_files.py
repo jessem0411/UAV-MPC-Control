@@ -56,11 +56,6 @@ class SupportFilesDrone:
         py=np.array([-1,-2])
         pz=np.array([-1,-2])
 
-        # # Complex poles
-        # px=np.array([-0.1+0.3j,-0.1-0.3j])
-        # py=np.array([-0.1+0.3j,-0.1-0.3j])
-        # pz=np.array([-1+1.3j,-1-1.3j])
-
         r=2
         f=0.025
         height_i=5
