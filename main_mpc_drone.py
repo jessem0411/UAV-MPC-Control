@@ -18,6 +18,10 @@ from cont_to_discrete import *
 from compute_mpc_matrices import *
 from uav_dynamics import *
 from qpsolvers import solve_qp
+from simulate_imu_measurements import *
+from simulate_gps_measurements import *
+from ekf_filter import *
+from get_jacobian import *
 
 # Initialize parameters
 drone_parameters = InitializeParameters()
@@ -36,10 +40,20 @@ x_ref,xdot_ref,xddot_ref,y_ref,ydot_ref,yddot_ref,z_ref,zdot_ref,zddot_ref,psi_r
 
 # Create initial state vector
 states = np.array([0,0,0,0,0,0,0,-1,0,0,0,psi_ref[0]])     # u v w p q r x y z phi theta psi
+estimated_states = np.concatenate((np.reshape(states,(-1,1)),np.zeros((9,1))),axis=0)   # u v w p q r x y z phi theta psi a_x a_y a_z bias_a bias_g
+states_for_controller = estimated_states[0:12,0]
 states_history = [states]
+covariance_matrix = 1*np.identity(np.size(estimated_states,0))
+estimated_states_history = [estimated_states.flatten()]
 states_history_animation = [states[6:len(states)]]
 angles_ref_history = np.array([[0,0,0]])
 velocity_fixed_history = np.array([[0,0,0]])
+ang_vel_noisy = np.array([0,0,0])
+acc_noisy = np.array([0,0,0])
+pos_noisy = np.array([0,-1,0])
+vel_noisy = np.array([0,0,0])
+angle_noisy = np.array([0,0,psi_ref[0]])
+
 
 # Create initial propeller velocity (rad/s)
 omega_min = drone_parameters.omega_min
@@ -71,6 +85,15 @@ Mz_min = Cq*2*(omega_min**2-omega_max**2)
 Mz_max = Cq*2*(omega_max**2-omega_min**2)
 y_min = np.array([[Mx_min],[My_min],[Mz_min]])
 y_max = np.array([[Mx_max],[My_max],[Mz_max]])
+
+# Compute Jacobian matrices needed for EKF
+lambda_g = 10**(-3)
+lambda_a = 10**(-4)
+bias_a = np.array([0.01,0.02,0.03])
+bias_g = np.array([5*10 ** (-3),7*10**(-3),8*10**(-3)])
+jacobian_f_x,jacobian_f_u = get_jacobian(drone_parameters,lambda_g,lambda_a)
+
+
 
 #### Implementation of MPC with feedback linearization ####
 for i in range(0,len(time_trajectory)-1):
@@ -170,13 +193,103 @@ for i in range(0,len(time_trajectory)-1):
         propeller_history = np.concatenate((propeller_history,np.array([[omega1,omega2,omega3,omega4]])),axis=0)
         omega = omega1-omega2+omega3-omega4
 
-        # Propagate UAV dyanmics
-        states,states_animation,input_animation = uav_dynamics(states,omega,T,Mx,My,Mz,drone_parameters)
+        # Propagate UAV dynamics
+        states,states_animation,input_animation,acc = uav_dynamics(states,omega,T,Mx,My,Mz,drone_parameters)
         states_history = np.concatenate((states_history,[states]),axis=0)
+
+        # Implementation of EKF to estimate the states
+        estimated_states,covariance_matrix = ekf_filter(estimated_states,covariance_matrix,ang_vel_noisy,acc_noisy,pos_noisy,vel_noisy,angle_noisy,drone_parameters,lambda_g,lambda_a,jacobian_f_x,jacobian_f_u)
+        states_for_controller = estimated_states[0:12,0]
+
+        # Generate IMU and GPS measurements from UAV dynamics
+        ang_vel_noisy, acc_noisy,bias_a,bias_g = simulate_imu_measurements(states, acc, bias_g, bias_a, lambda_g, lambda_a,drone_parameters)
+        pos_noisy, vel_noisy, angle_noisy = simulate_gps_measurements(states)
+
         states_history_animation = np.concatenate((states_history_animation, states_animation), axis=0)
         input_history_animation = np.concatenate((input_history_animation, input_animation), axis=0)
-
+        estimated_states_history = np.concatenate((estimated_states_history,np.transpose(estimated_states)),axis=0)
 ################################ ANIMATION LOOP ###############################
+n = 3
+m = 4
+fig_x= 16
+fig_y=9
+fig=plt.figure(figsize=(fig_x,fig_y),dpi=120,facecolor=(0.8,0.8,0.8))
+gs=gridspec.GridSpec(n,m)
+ax1=fig.add_subplot(gs[0,0],facecolor=(0.9,0.9,0.9))
+ax1.plot(time_mpc,estimated_states_history[:,0],label = 'u_estimated')
+ax1.plot(time_mpc,states_history[:,0],label= 'u_true')
+ax1.legend()
+plt.grid(True)
+
+ax2=fig.add_subplot(gs[0,1],facecolor=(0.9,0.9,0.9))
+ax2.plot(time_mpc,estimated_states_history[:,1],label = 'v_estimated')
+ax2.plot(time_mpc,states_history[:,1],label = 'v_true')
+ax2.legend()
+plt.grid(True)
+
+ax3=fig.add_subplot(gs[0,2],facecolor=(0.9,0.9,0.9))
+ax3.plot(time_mpc,estimated_states_history[:,2],label = 'w_estimated')
+ax3.plot(time_mpc,states_history[:,2],label = 'w_true')
+ax3.legend()
+plt.grid(True)
+
+ax4=fig.add_subplot(gs[0,3],facecolor=(0.9,0.9,0.9))
+ax4.plot(time_mpc,estimated_states_history[:,3],label = 'p_estimated')
+ax4.plot(time_mpc,states_history[:,3],label = 'p_true')
+ax4.legend()
+plt.grid(True)
+
+ax5=fig.add_subplot(gs[1,0],facecolor=(0.9,0.9,0.9))
+ax5.plot(time_mpc,estimated_states_history[:,4],label = 'q_estimated')
+ax5.plot(time_mpc,states_history[:,4],label = 'q_true')
+ax5.legend()
+plt.grid(True)
+
+ax6=fig.add_subplot(gs[1,1],facecolor=(0.9,0.9,0.9))
+ax6.plot(time_mpc,estimated_states_history[:,5],label = 'r_estimated')
+ax6.plot(time_mpc,states_history[:,5],label = 'r_true')
+ax6.legend()
+plt.grid(True)
+
+ax7=fig.add_subplot(gs[1,2],facecolor=(0.9,0.9,0.9))
+ax7.plot(time_mpc,estimated_states_history[:,6],label = 'x_estimated')
+ax7.plot(time_mpc,states_history[:,6],label = 'x_true')
+ax7.legend()
+plt.grid(True)
+
+ax8=fig.add_subplot(gs[1,3],facecolor=(0.9,0.9,0.9))
+ax8.plot(time_mpc,estimated_states_history[:,7],label = 'y_estimated')
+ax8.plot(time_mpc,states_history[:,7],label = 'y_true')
+ax8.legend()
+plt.grid(True)
+
+ax9=fig.add_subplot(gs[2,0],facecolor=(0.9,0.9,0.9))
+ax9.plot(time_mpc,estimated_states_history[:,8],label = 'z_estimated')
+ax9.plot(time_mpc,states_history[:,8],label = 'z_true')
+ax9.legend()
+plt.grid(True)
+
+ax10=fig.add_subplot(gs[2,1],facecolor=(0.9,0.9,0.9))
+ax10.plot(time_mpc,estimated_states_history[:,9],label = 'phi_estimated')
+ax10.plot(time_mpc,states_history[:,9],label = 'phi_true')
+ax10.legend()
+plt.grid(True)
+
+ax11=fig.add_subplot(gs[2,2],facecolor=(0.9,0.9,0.9))
+ax11.plot(time_mpc,estimated_states_history[:,10],label = 'theta_estimated')
+ax11.plot(time_mpc,states_history[:,10],label = 'theta_true')
+ax11.legend()
+plt.grid(True)
+
+ax12=fig.add_subplot(gs[2,3],facecolor=(0.9,0.9,0.9))
+ax12.plot(time_mpc,estimated_states_history[:,11],label = 'psi_estimated')
+ax12.plot(time_mpc,states_history[:,11],label = 'psi_true')
+ax12.legend()
+plt.grid(True)
+
+plt.show()
+
+
 if max(y_ref)>=max(x_ref):
     max_ref=max(y_ref)
 else:

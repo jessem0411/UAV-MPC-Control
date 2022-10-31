@@ -100,7 +100,8 @@ def uav_dynamics(states,omega,T,Mx,My,Mz,drone_parameters):
             next_temp_states = current_states + slopes_k3 * sampling_time
         else:
             slopes_k4 = np.array([u_dot, v_dot, w_dot, p_dot, q_dot, r_dot, x_dot, y_dot, z_dot, phi_dot, theta_dot, psi_dot])
-            next_temp_states = current_states + 1/6*(slopes_k1+2*slopes_k2+2*slopes_k3+slopes_k4) * sampling_time
+            temp = 1/6*(slopes_k1+2*slopes_k2+2*slopes_k3+slopes_k4)
+            next_temp_states = current_states + temp * sampling_time
 
         u = next_temp_states[0]
         v = next_temp_states[1]
@@ -115,7 +116,9 @@ def uav_dynamics(states,omega,T,Mx,My,Mz,drone_parameters):
         theta = next_temp_states[10]
         psi = next_temp_states[11]
 
+
     new_states = next_temp_states
+    acc = temp[0:3]
     for k in range(0, sub_loop):
         x_or = current_states[6]
         y_or = current_states[7]
@@ -134,4 +137,4 @@ def uav_dynamics(states,omega,T,Mx,My,Mz,drone_parameters):
         input_animation[k, 2] = My
         input_animation[k, 3] = Mz
 
-    return new_states,states_animation,input_animation
+    return new_states,states_animation,input_animation,acc
